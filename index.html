@@ -256,8 +256,6 @@
             .setInteractive({ useHandCursor: true });
 
           howToPlayText.on('pointerdown', () => {
-            if (this.game.sounds)
-              this.game.sounds.click.triggerAttackRelease('C2', '8n');
             this.instructionsGroup.setVisible(true);
           });
           howToPlayText.on('pointerover', () =>
@@ -279,6 +277,17 @@
 
           this.spaceKey = this.input.keyboard.addKey(
             Phaser.Input.Keyboard.KeyCodes.SPACE,
+          );
+
+          // --- FIX: Prime the audio context on the first interaction with the scene ---
+          this.input.once(
+            'pointerdown',
+            () => {
+              if (Tone.context.state !== 'running') {
+                Tone.start();
+              }
+            },
+            this,
           );
         }
 
@@ -365,13 +374,10 @@ Spacebar / Center Button: Flip
           }
         }
 
-        async startGame() {
+        startGame() {
           if (this.isStarting) return;
           this.isStarting = true;
 
-          if (Tone.context.state !== 'running') {
-            await Tone.start();
-          }
           if (this.game.sounds)
             this.game.sounds.click.triggerAttackRelease('C2', '8n');
 
@@ -579,30 +585,23 @@ Spacebar / Center Button: Flip
             .setInteractive()
             .setDepth(3);
 
-          // --- ROBUST TOUCH CONTROLS ---
+          // --- NEW, MORE ROBUST TOUCH HANDLING ---
           leftButton.on('pointerdown', () => {
             this.moveLeft = true;
           });
-          leftButton.on('pointerout', () => {
-            this.moveLeft = false;
-          });
-          leftButton.on('pointerup', () => {
-            this.moveLeft = false;
-          });
-
           rightButton.on('pointerdown', () => {
             this.moveRight = true;
           });
-          rightButton.on('pointerout', () => {
-            this.moveRight = false;
-          });
-          rightButton.on('pointerup', () => {
+
+          this.input.on('pointerup', () => {
+            this.moveLeft = false;
             this.moveRight = false;
           });
 
-          flipButton.on('pointerdown', () => this.flipPlayer());
+          flipButton.on('pointerdown', () => {
+            this.flipPlayer();
+          });
 
-          // Add visual feedback separately
           [leftButton, rightButton, flipButton].forEach((button) => {
             button.on('pointerdown', () => {
               this.tweens.add({
