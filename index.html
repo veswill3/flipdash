@@ -1,0 +1,1033 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0"
+    />
+    <title>FlipDash</title>
+    <!-- Phaser 3 Game Library -->
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
+    <!-- Tone.js Audio Library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.7.77/Tone.js"></script>
+    <style>
+      /* Basic styling to make the game fullscreen and remove margins */
+      body {
+        background-color: #1a1a1a;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        width: 100vw;
+        height: 100vh;
+        overflow: hidden;
+      }
+      canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <script>
+      // --- GLOBAL GAME SETTINGS ---
+      const GAME_WIDTH = 480;
+      const GAME_HEIGHT = 800;
+      const HIGH_SCORE_KEY = 'flipDashHighScore';
+
+      // --- COLOR PALETTE ---
+      const COLOR_ONE = 0x4287f5; // Blue
+      const COLOR_TWO = 0xf5a742; // Orange
+      const WALL_COLOR = 0xaaaaaa; // Grey for fatal walls
+
+      // --- DYNAMIC TEXTURE GENERATION ---
+      function createPlayerTexture() {
+        const canvas = document.createElement('canvas');
+        canvas.width = 50;
+        canvas.height = 50;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#FFFFFF';
+        ctx.beginPath();
+        ctx.roundRect(0, 0, 50, 50, 15);
+        ctx.fill();
+        return canvas.toDataURL();
+      }
+      function createArrowTexture(direction) {
+        const canvas = document.createElement('canvas');
+        canvas.width = 80;
+        canvas.height = 80;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+        ctx.beginPath();
+        if (direction === 'left') {
+          ctx.moveTo(60, 15);
+          ctx.lineTo(20, 40);
+          ctx.lineTo(60, 65);
+        } else {
+          ctx.moveTo(20, 15);
+          ctx.lineTo(60, 40);
+          ctx.lineTo(20, 65);
+        }
+        ctx.closePath();
+        ctx.fill();
+        return canvas.toDataURL();
+      }
+      function createFlipTexture() {
+        const canvas = document.createElement('canvas');
+        canvas.width = 80;
+        canvas.height = 80;
+        const ctx = canvas.getContext('2d');
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+        ctx.lineWidth = 10;
+        ctx.beginPath();
+        ctx.arc(40, 40, 25, -Math.PI / 2, Math.PI, false);
+        ctx.moveTo(65, 40);
+        ctx.lineTo(75, 40);
+        ctx.lineTo(65, 50);
+        ctx.stroke();
+        return canvas.toDataURL();
+      }
+      function createBlockTexture(color) {
+        const canvas = document.createElement('canvas');
+        canvas.width = 1;
+        canvas.height = 1;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = color;
+        ctx.fillRect(0, 0, 1, 1);
+        return canvas.toDataURL();
+      }
+      function createStarfieldTexture() {
+        const canvas = document.createElement('canvas');
+        const size = 256;
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+        for (let i = 0; i < 30; i++) {
+          const x = Math.random() * size;
+          const y = Math.random() * size;
+          const radius = Math.random() * 1.2;
+          ctx.beginPath();
+          ctx.arc(x, y, radius, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        return canvas.toDataURL();
+      }
+
+      // --- SCENE: PRELOADER ---
+      class PreloadScene extends Phaser.Scene {
+        constructor() {
+          super({ key: 'PreloadScene' });
+        }
+        preload() {
+          this.load.image('player', createPlayerTexture());
+          this.load.image('arrow_left', createArrowTexture('left'));
+          this.load.image('arrow_right', createArrowTexture('right'));
+          this.load.image('flip_icon', createFlipTexture());
+          this.load.image('wall', createBlockTexture('#aaaaaa'));
+          this.load.image('gate_blue', createBlockTexture('#4287f5'));
+          this.load.image('gate_orange', createBlockTexture('#f5a742'));
+          this.load.image('sweet_spot', createBlockTexture('#ffffff'));
+          this.load.image('particle', createBlockTexture('#ffffff'));
+          this.load.image('starfield', createStarfieldTexture());
+        }
+        create() {
+          const volume = -10;
+          this.game.sounds = {
+            flip: new Tone.Synth({
+              oscillator: { type: 'sine' },
+              envelope: {
+                attack: 0.005,
+                decay: 0.1,
+                sustain: 0.3,
+                release: 0.1,
+              },
+              volume,
+            }).toDestination(),
+            score: new Tone.Synth({
+              oscillator: { type: 'triangle' },
+              envelope: {
+                attack: 0.005,
+                decay: 0.2,
+                sustain: 0.1,
+                release: 0.2,
+              },
+              volume,
+            }).toDestination(),
+            score_perfect: new Tone.Synth({
+              oscillator: { type: 'triangle' },
+              envelope: {
+                attack: 0.005,
+                decay: 0.2,
+                sustain: 0.1,
+                release: 0.2,
+              },
+              volume,
+            }).toDestination(),
+            crash: new Tone.NoiseSynth({
+              noise: { type: 'pink' },
+              envelope: { attack: 0.005, decay: 0.3, sustain: 0, release: 0.1 },
+              volume,
+            }).toDestination(),
+            click: new Tone.MembraneSynth({
+              pitchDecay: 0.008,
+              octaves: 2,
+              oscillator: { type: 'square' },
+              envelope: { attack: 0.001, decay: 0.2, sustain: 0, release: 0.2 },
+              volume,
+            }).toDestination(),
+          };
+          this.scene.start('TitleScene');
+        }
+      }
+
+      // --- SCENE: TITLE SCREEN ---
+      class TitleScene extends Phaser.Scene {
+        constructor() {
+          super({ key: 'TitleScene' });
+        }
+
+        create() {
+          this.isStarting = false;
+
+          const titleText = this.add
+            .text(
+              this.cameras.main.width / 2,
+              this.cameras.main.height / 3,
+              'FlipDash',
+              {
+                fontFamily: '"Arial Black", Gadget, sans-serif',
+                fontSize: '64px',
+                color: '#ffffff',
+                stroke: '#000000',
+                strokeThickness: 8,
+              },
+            )
+            .setOrigin(0.5);
+          this.startButton = this.add
+            .rectangle(
+              this.cameras.main.width / 2,
+              this.cameras.main.height / 2 + 20,
+              280,
+              80,
+              0x2ecc71,
+            )
+            .setStrokeStyle(4, 0x27ae60);
+          const startText = this.add
+            .text(this.startButton.x, this.startButton.y, 'Start Game', {
+              fontFamily: 'Arial, sans-serif',
+              fontSize: '32px',
+              color: '#ffffff',
+            })
+            .setOrigin(0.5);
+
+          this.startButton.setInteractive({ useHandCursor: true });
+          this.startButton.on('pointerdown', () => this.startGame());
+
+          const highScore = localStorage.getItem(HIGH_SCORE_KEY) || 0;
+          const highScoreText = this.add
+            .text(
+              this.cameras.main.width / 2,
+              this.startButton.y + 100,
+              `High Score: ${highScore}`,
+              {
+                fontSize: '28px',
+                color: '#f5a742',
+                fontFamily: 'Arial, sans-serif',
+              },
+            )
+            .setOrigin(0.5);
+
+          const howToPlayText = this.add
+            .text(
+              this.cameras.main.width / 2,
+              highScoreText.y + 60,
+              'How to Play',
+              {
+                fontSize: '24px',
+                color: '#ffffff',
+                fontFamily: 'Arial, sans-serif',
+              },
+            )
+            .setOrigin(0.5)
+            .setInteractive({ useHandCursor: true });
+
+          howToPlayText.on('pointerdown', () => {
+            if (this.game.sounds)
+              this.game.sounds.click.triggerAttackRelease('C2', '8n');
+            this.instructionsGroup.setVisible(true);
+          });
+          howToPlayText.on('pointerover', () =>
+            howToPlayText.setStyle({ fill: '#f5a742' }),
+          );
+          howToPlayText.on('pointerout', () =>
+            howToPlayText.setStyle({ fill: '#ffffff' }),
+          );
+
+          this.mainMenuItems = [
+            titleText,
+            this.startButton,
+            startText,
+            highScoreText,
+            howToPlayText,
+          ];
+
+          this.createInstructions();
+
+          this.spaceKey = this.input.keyboard.addKey(
+            Phaser.Input.Keyboard.KeyCodes.SPACE,
+          );
+        }
+
+        createInstructions() {
+          this.instructionsGroup = this.add.group();
+          const panelWidth = GAME_WIDTH * 0.9;
+          const panelHeight = GAME_HEIGHT * 0.7;
+
+          const overlay = this.add
+            .rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.7)
+            .setOrigin(0);
+          const panel = this.add
+            .rectangle(
+              GAME_WIDTH / 2,
+              GAME_HEIGHT / 2,
+              panelWidth,
+              panelHeight,
+              0x333333,
+            )
+            .setStrokeStyle(2, 0xcccccc);
+
+          const instructionText = `
+How to Play
+
+DASH left and right to align
+with the colored gate.
+
+FLIP your color to match
+the gate before passing through.
+
+Hitting the grey walls is fatal!
+
+--- CONTROLS ---
+
+Left/Right Arrows: Move
+Spacebar / Center Button: Flip
+`;
+
+          const body = this.add
+            .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 40, instructionText, {
+              fontSize: '22px',
+              fontFamily: 'Arial, sans-serif',
+              align: 'center',
+              lineSpacing: 12,
+              wordWrap: { width: panelWidth - 40 },
+            })
+            .setOrigin(0.5);
+
+          const closeButton = this.add
+            .text(
+              GAME_WIDTH / 2,
+              panel.y + panel.displayHeight / 2 - 40,
+              '[ Tap to Close ]',
+              {
+                fontSize: '28px',
+                fontFamily: 'Arial, sans-serif',
+                color: '#f5a742',
+              },
+            )
+            .setOrigin(0.5);
+
+          overlay.setInteractive();
+          overlay.on('pointerdown', () =>
+            this.instructionsGroup.setVisible(false),
+          );
+
+          this.instructionsGroup.addMultiple([
+            overlay,
+            panel,
+            body,
+            closeButton,
+          ]);
+          this.instructionsGroup.setDepth(10);
+          this.instructionsGroup.setVisible(false);
+        }
+
+        update() {
+          if (this.instructionsGroup && this.instructionsGroup.visible) {
+            return;
+          }
+
+          if (Phaser.Input.Keyboard.JustDown(this.spaceKey)) {
+            this.startGame();
+          }
+        }
+
+        async startGame() {
+          if (this.isStarting) return;
+          this.isStarting = true;
+
+          if (Tone.context.state !== 'running') {
+            await Tone.start();
+          }
+          if (this.game.sounds)
+            this.game.sounds.click.triggerAttackRelease('C2', '8n');
+
+          this.tweens.add({
+            targets: this.startButton,
+            scaleX: 0.95,
+            scaleY: 0.95,
+            duration: 100,
+            yoyo: true,
+          });
+
+          this.tweens.add({
+            targets: this.mainMenuItems,
+            alpha: 0,
+            duration: 300,
+            ease: 'Power2',
+            onComplete: () => {
+              this.scene.start('GameScene');
+            },
+          });
+        }
+      }
+
+      // --- SCENE: GAMEPLAY ---
+      class GameScene extends Phaser.Scene {
+        constructor() {
+          super({ key: 'GameScene' });
+          this.initialObstacleSpeed = 250;
+          this.initialSpawnDelay = 1800;
+          this.initialGateWidth = 140;
+          this.sweetSpotWidth = 25;
+
+          this.player = null;
+          this.playerColorState = 0;
+          this.score = 0;
+          this.scoreText = null;
+          this.streak = 1;
+          this.streakText = null;
+          this.obstacleGroup = null;
+          this.obstacleSpawnTimer = null;
+          this.isGameOver = false;
+          this.blueParticles = null;
+          this.orangeParticles = null;
+          this.cursors = null;
+          this.moveLeft = false;
+          this.moveRight = false;
+          this.currentObstacleSpeed = 0;
+          this.spawnDelay = 0;
+          this.gateWidth = 0;
+          this.starfield = null;
+        }
+
+        create() {
+          this.isGameOver = false;
+          this.score = 0;
+          this.streak = 1;
+          this.moveLeft = false;
+          this.moveRight = false;
+          this.playerColorState = 0;
+          this.currentObstacleSpeed = this.initialObstacleSpeed;
+          this.spawnDelay = this.initialSpawnDelay;
+          this.gateWidth = this.initialGateWidth;
+
+          this.starfield = this.add
+            .tileSprite(0, 0, GAME_WIDTH, GAME_HEIGHT, 'starfield')
+            .setOrigin(0, 0)
+            .setDepth(0);
+
+          this.player = this.physics.add.sprite(
+            GAME_WIDTH / 2,
+            GAME_HEIGHT - 120,
+            'player',
+          );
+          this.player.setTint(COLOR_ONE);
+          this.player.body.setCollideWorldBounds(true);
+          this.player.setDepth(2);
+
+          this.cursors = this.input.keyboard.createCursorKeys();
+          this.createOnScreenControls();
+          this.createParticles();
+
+          this.scoreText = this.add
+            .text(16, 16, 'Score: 0', {
+              fontSize: '32px',
+              fontFamily: 'Arial, sans-serif',
+              fill: '#FFF',
+            })
+            .setDepth(3);
+          this.streakText = this.add
+            .text(GAME_WIDTH - 16, 16, 'x1', {
+              fontSize: '32px',
+              fontFamily: 'Arial, sans-serif',
+              fill: '#f5a742',
+            })
+            .setOrigin(1, 0)
+            .setDepth(3);
+
+          this.obstacleGroup = this.physics.add.group();
+          this.spawnObstacle();
+          this.obstacleSpawnTimer = this.time.addEvent({
+            delay: this.spawnDelay,
+            callback: this.spawnObstacle,
+            callbackScope: this,
+            loop: true,
+          });
+          this.physics.add.overlap(
+            this.player,
+            this.obstacleGroup,
+            this.handleCollision,
+            null,
+            this,
+          );
+        }
+
+        update() {
+          if (this.isGameOver) return;
+          this.starfield.tilePositionY -= this.currentObstacleSpeed / 100;
+
+          const playerSpeed = 350;
+          if (this.moveLeft || this.cursors.left.isDown) {
+            this.player.body.setVelocityX(-playerSpeed);
+          } else if (this.moveRight || this.cursors.right.isDown) {
+            this.player.body.setVelocityX(playerSpeed);
+          } else {
+            this.player.body.setVelocityX(0);
+          }
+          if (
+            Phaser.Input.Keyboard.JustDown(this.cursors.up) ||
+            Phaser.Input.Keyboard.JustDown(this.cursors.space)
+          ) {
+            this.flipPlayer();
+          }
+
+          this.obstacleGroup.getChildren().forEach((obstacle) => {
+            if (!obstacle.active) {
+              return;
+            }
+            if (!obstacle.scored && obstacle.y > this.player.y) {
+              obstacle.scored = true;
+              if (obstacle.isGate) {
+                this.streak = 1;
+                this.streakText.setText(`x${this.streak}`);
+              }
+            }
+            if (obstacle.y > GAME_HEIGHT + 50) {
+              obstacle.destroy();
+            }
+          });
+        }
+
+        createParticles() {
+          const particleConfig = {
+            speed: 200,
+            scale: { start: 2, end: 0 },
+            blendMode: 'ADD',
+            lifespan: 500,
+            gravityY: 300,
+            on: false,
+          };
+          this.blueParticles = this.add
+            .particles(-100, -100, 'particle', {
+              ...particleConfig,
+              tint: COLOR_ONE,
+            })
+            .setDepth(1);
+          this.orangeParticles = this.add
+            .particles(-100, -100, 'particle', {
+              ...particleConfig,
+              tint: COLOR_TWO,
+            })
+            .setDepth(1);
+        }
+
+        updateDifficulty() {
+          this.currentObstacleSpeed = Phaser.Math.Clamp(
+            this.initialObstacleSpeed + Math.floor(this.score / 40) * 10,
+            this.initialObstacleSpeed,
+            600,
+          );
+          this.spawnDelay = Phaser.Math.Clamp(
+            this.initialSpawnDelay - Math.floor(this.score / 15) * 50,
+            750,
+            this.initialSpawnDelay,
+          );
+          this.obstacleSpawnTimer.delay = this.spawnDelay;
+          this.gateWidth = Phaser.Math.Clamp(
+            this.initialGateWidth - Math.floor(this.score / 25) * 5,
+            80,
+            this.initialGateWidth,
+          );
+        }
+
+        createOnScreenControls() {
+          const buttonY = GAME_HEIGHT - 60;
+          const leftButton = this.add
+            .sprite(GAME_WIDTH * 0.25, buttonY, 'arrow_left')
+            .setInteractive()
+            .setDepth(3);
+          const rightButton = this.add
+            .sprite(GAME_WIDTH * 0.75, buttonY, 'arrow_right')
+            .setInteractive()
+            .setDepth(3);
+          const flipButton = this.add
+            .sprite(GAME_WIDTH / 2, buttonY, 'flip_icon')
+            .setInteractive()
+            .setDepth(3);
+
+          // --- ROBUST TOUCH CONTROLS ---
+          leftButton.on('pointerdown', () => {
+            this.moveLeft = true;
+          });
+          leftButton.on('pointerout', () => {
+            this.moveLeft = false;
+          });
+          leftButton.on('pointerup', () => {
+            this.moveLeft = false;
+          });
+
+          rightButton.on('pointerdown', () => {
+            this.moveRight = true;
+          });
+          rightButton.on('pointerout', () => {
+            this.moveRight = false;
+          });
+          rightButton.on('pointerup', () => {
+            this.moveRight = false;
+          });
+
+          flipButton.on('pointerdown', () => this.flipPlayer());
+
+          // Add visual feedback separately
+          [leftButton, rightButton, flipButton].forEach((button) => {
+            button.on('pointerdown', () => {
+              this.tweens.add({
+                targets: button,
+                scale: 0.85,
+                duration: 100,
+                yoyo: true,
+              });
+            });
+          });
+        }
+
+        flipPlayer() {
+          if (this.isGameOver || this.tweens.isTweening(this.player)) return;
+          if (this.game.sounds)
+            this.game.sounds.flip.triggerAttackRelease('C5', '32n');
+          this.playerColorState = 1 - this.playerColorState;
+          this.player.setTint(
+            this.playerColorState === 0 ? COLOR_ONE : COLOR_TWO,
+          );
+          this.tweens.add({
+            targets: this.player,
+            scaleX: 1.3,
+            scaleY: 0.7,
+            duration: 80,
+            yoyo: true,
+            ease: 'Power1',
+          });
+        }
+
+        spawnObstacle() {
+          if (this.isGameOver) return;
+
+          const gatePositionX = Phaser.Math.Between(
+            this.gateWidth / 2,
+            GAME_WIDTH - this.gateWidth / 2,
+          );
+          const gateColorState = Phaser.Math.Between(0, 1);
+          const gateTexture =
+            gateColorState === 0 ? 'gate_blue' : 'gate_orange';
+
+          const leftWallWidth = gatePositionX - this.gateWidth / 2;
+          const rightWallWidth =
+            GAME_WIDTH - (gatePositionX + this.gateWidth / 2);
+
+          let newParts = [];
+
+          if (leftWallWidth > 0) {
+            const leftWall = this.obstacleGroup.create(
+              leftWallWidth / 2,
+              -20,
+              'wall',
+            );
+            leftWall.setDisplaySize(leftWallWidth, 30);
+            leftWall.isGate = false;
+            newParts.push(leftWall);
+          }
+
+          const gate = this.obstacleGroup.create(
+            gatePositionX,
+            -20,
+            gateTexture,
+          );
+          gate.setDisplaySize(this.gateWidth, 30);
+          gate.isGate = true;
+          gate.colorState = gateColorState;
+          newParts.push(gate);
+
+          const sweetSpot = this.obstacleGroup.create(
+            gatePositionX,
+            -20,
+            'sweet_spot',
+          );
+          sweetSpot.setDisplaySize(this.sweetSpotWidth, 30).setAlpha(0.4);
+          sweetSpot.isGate = false;
+          sweetSpot.isSweetSpot = true;
+          newParts.push(sweetSpot);
+
+          gate.sweetSpot = sweetSpot;
+
+          if (rightWallWidth > 0) {
+            const rightWall = this.obstacleGroup.create(
+              gatePositionX + this.gateWidth / 2 + rightWallWidth / 2,
+              -20,
+              'wall',
+            );
+            rightWall.setDisplaySize(rightWallWidth, 30);
+            rightWall.isGate = false;
+            newParts.push(rightWall);
+          }
+
+          newParts.forEach((part) => {
+            part.scored = false;
+            part.body.setVelocityY(this.currentObstacleSpeed);
+          });
+        }
+
+        handleCollision(player, obstaclePart) {
+          if (this.isGameOver || !obstaclePart.active) return;
+
+          if (obstaclePart.isSweetSpot) return;
+
+          if (obstaclePart.isGate) {
+            if (this.playerColorState !== obstaclePart.colorState) {
+              this.gameOver();
+              return;
+            }
+
+            const distance = Math.abs(player.x - obstaclePart.x);
+            if (distance < this.sweetSpotWidth / 2) {
+              this.streak++;
+              this.score += 10 * this.streak;
+              if (this.game.sounds)
+                this.game.sounds.score_perfect.triggerAttackRelease(
+                  'C6',
+                  '32n',
+                );
+              this.showPerfectText();
+            } else {
+              this.streak = 1;
+              this.score += 10;
+              if (this.game.sounds)
+                this.game.sounds.score.triggerAttackRelease('G5', '32n');
+            }
+
+            this.scoreText.setText('Score: ' + this.score);
+            this.streakText.setText(`x${this.streak}`);
+            this.updateDifficulty();
+
+            if (obstaclePart.sweetSpot) {
+              obstaclePart.sweetSpot.destroy();
+            }
+            obstaclePart.destroy();
+          } else {
+            this.gameOver();
+          }
+        }
+
+        showPerfectText() {
+          const perfectText = this.add
+            .text(this.player.x, this.player.y - 50, 'PERFECT!', {
+              fontSize: '24px',
+              fontFamily: '"Arial Black"',
+              color: '#2ecc71',
+            })
+            .setOrigin(0.5);
+
+          this.tweens.add({
+            targets: perfectText,
+            y: perfectText.y - 50,
+            alpha: 0,
+            duration: 800,
+            ease: 'Power2',
+            onComplete: () => {
+              perfectText.destroy();
+            },
+          });
+        }
+
+        gameOver() {
+          if (this.isGameOver) return;
+          this.isGameOver = true;
+          if (this.game.sounds)
+            this.game.sounds.crash.triggerAttackRelease('8n');
+          this.physics.pause();
+          this.obstacleSpawnTimer.remove();
+
+          const oldHighScore = parseInt(
+            localStorage.getItem(HIGH_SCORE_KEY) || 0,
+          );
+          if (this.score > oldHighScore) {
+            localStorage.setItem(HIGH_SCORE_KEY, this.score);
+          }
+
+          this.cameras.main.shake(500, 0.02);
+          this.player.setTint(0xff0000);
+          this.time.delayedCall(1000, () => {
+            const newHighScore = localStorage.getItem(HIGH_SCORE_KEY) || 0;
+            const isNew = this.score > oldHighScore;
+            this.scene.start('ScoreScene', {
+              score: this.score,
+              highScore: newHighScore,
+              isNewHighScore: isNew,
+            });
+          });
+        }
+      }
+
+      // --- SCENE: SCORE SCREEN ---
+      class ScoreScene extends Phaser.Scene {
+        constructor() {
+          super({ key: 'ScoreScene' });
+        }
+
+        init(data) {
+          this.finalScore = data.score;
+          this.highScore = data.highScore;
+          this.isNewHighScore = data.isNewHighScore;
+        }
+
+        create() {
+          this.isRestarting = false;
+
+          const gameOverTextY = this.cameras.main.height * 0.25;
+          this.add
+            .text(this.cameras.main.width / 2, gameOverTextY, 'Game Over', {
+              fontFamily: '"Arial Black", Gadget, sans-serif',
+              fontSize: '64px',
+              color: '#ff4d4d',
+            })
+            .setOrigin(0.5);
+
+          const scoreY = gameOverTextY + 120;
+          this.add
+            .text(this.cameras.main.width / 2, scoreY, 'Your Score:', {
+              fontSize: '32px',
+              color: '#ffffff',
+            })
+            .setOrigin(0.5);
+          this.add
+            .text(this.cameras.main.width / 2, scoreY + 50, this.finalScore, {
+              fontFamily: 'Arial, sans-serif',
+              fontSize: '72px',
+              color: '#f5a742',
+            })
+            .setOrigin(0.5);
+
+          const highScoreY = scoreY + 130;
+          this.add
+            .text(
+              this.cameras.main.width / 2,
+              highScoreY,
+              `High Score: ${this.highScore}`,
+              { fontSize: '28px', color: '#ffffff' },
+            )
+            .setOrigin(0.5);
+
+          if (this.isNewHighScore) {
+            const newText = this.add
+              .text(this.cameras.main.width - 80, highScoreY, 'New!', {
+                fontSize: '28px',
+                color: '#2ecc71',
+              })
+              .setOrigin(0.5);
+            this.tweens.add({
+              targets: newText,
+              scale: 1.2,
+              duration: 300,
+              yoyo: true,
+              loop: -1,
+            });
+          }
+
+          const restartButtonY = highScoreY + 100;
+          this.restartButton = this.add
+            .rectangle(
+              this.cameras.main.width / 2,
+              restartButtonY,
+              280,
+              80,
+              0x2ecc71,
+            )
+            .setStrokeStyle(4, 0x27ae60);
+          this.add
+            .text(this.restartButton.x, this.restartButton.y, 'Play Again', {
+              fontSize: '32px',
+              color: '#ffffff',
+            })
+            .setOrigin(0.5);
+
+          this.restartButton.setInteractive({ useHandCursor: true });
+          this.restartButton.on('pointerdown', () => this.restartGame());
+
+          const howToPlayText = this.add
+            .text(
+              this.cameras.main.width / 2,
+              this.restartButton.y + 80,
+              'How to Play',
+              {
+                fontSize: '24px',
+                color: '#ffffff',
+                fontFamily: 'Arial, sans-serif',
+              },
+            )
+            .setOrigin(0.5)
+            .setInteractive({ useHandCursor: true });
+
+          howToPlayText.on('pointerdown', () => {
+            if (this.game.sounds)
+              this.game.sounds.click.triggerAttackRelease('C2', '8n');
+            this.instructionsGroup.setVisible(true);
+          });
+          howToPlayText.on('pointerover', () =>
+            howToPlayText.setStyle({ fill: '#f5a742' }),
+          );
+          howToPlayText.on('pointerout', () =>
+            howToPlayText.setStyle({ fill: '#ffffff' }),
+          );
+
+          this.createInstructions();
+
+          this.spaceKey = this.input.keyboard.addKey(
+            Phaser.Input.Keyboard.KeyCodes.SPACE,
+          );
+        }
+
+        createInstructions() {
+          this.instructionsGroup = this.add.group();
+          const panelWidth = GAME_WIDTH * 0.9;
+          const panelHeight = GAME_HEIGHT * 0.7;
+
+          const overlay = this.add
+            .rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.7)
+            .setOrigin(0);
+          const panel = this.add
+            .rectangle(
+              GAME_WIDTH / 2,
+              GAME_HEIGHT / 2,
+              panelWidth,
+              panelHeight,
+              0x333333,
+            )
+            .setStrokeStyle(2, 0xcccccc);
+
+          const instructionText = `
+How to Play
+
+DASH left and right to align
+with the colored gate.
+
+FLIP your color to match
+the gate before passing through.
+
+Hitting the grey walls is fatal!
+
+--- CONTROLS ---
+
+Left/Right Arrows: Move
+Spacebar / Center Button: Flip
+`;
+
+          const body = this.add
+            .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 40, instructionText, {
+              fontSize: '22px',
+              fontFamily: 'Arial, sans-serif',
+              align: 'center',
+              lineSpacing: 12,
+              wordWrap: { width: panelWidth - 40 },
+            })
+            .setOrigin(0.5);
+
+          const closeButton = this.add
+            .text(
+              GAME_WIDTH / 2,
+              panel.y + panel.displayHeight / 2 - 40,
+              '[ Tap to Close ]',
+              {
+                fontSize: '28px',
+                fontFamily: 'Arial, sans-serif',
+                color: '#f5a742',
+              },
+            )
+            .setOrigin(0.5);
+
+          overlay.setInteractive();
+          overlay.on('pointerdown', () =>
+            this.instructionsGroup.setVisible(false),
+          );
+
+          this.instructionsGroup.addMultiple([
+            overlay,
+            panel,
+            body,
+            closeButton,
+          ]);
+          this.instructionsGroup.setDepth(10);
+          this.instructionsGroup.setVisible(false);
+        }
+
+        update() {
+          if (this.instructionsGroup && this.instructionsGroup.visible) {
+            return;
+          }
+
+          if (Phaser.Input.Keyboard.JustDown(this.spaceKey)) {
+            this.restartGame();
+          }
+        }
+
+        async restartGame() {
+          if (this.isRestarting) return;
+          this.isRestarting = true;
+
+          if (this.game.sounds)
+            this.game.sounds.click.triggerAttackRelease('C2', '8n');
+          this.tweens.add({
+            targets: this.restartButton,
+            scaleX: 0.95,
+            scaleY: 0.95,
+            duration: 100,
+            yoyo: true,
+            onComplete: () => {
+              this.scene.start('GameScene');
+            },
+          });
+        }
+      }
+
+      // --- PHASER GAME CONFIGURATION ---
+      const config = {
+        type: Phaser.AUTO,
+        width: GAME_WIDTH,
+        height: GAME_HEIGHT,
+        scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
+        physics: {
+          default: 'arcade',
+          arcade: {
+            gravity: { y: 0 },
+            debug: false,
+          },
+        },
+        scene: [PreloadScene, TitleScene, GameScene, ScoreScene],
+      };
+
+      const game = new Phaser.Game(config);
+    </script>
+  </body>
+</html>
